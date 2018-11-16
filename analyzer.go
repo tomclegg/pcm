@@ -1,3 +1,4 @@
+// Package pcm decodes PCM audio data and reports loudness levels.
 package pcm
 
 import (
@@ -9,15 +10,28 @@ import (
 	"time"
 )
 
+// Analyzer decodes PCM audio data, computes RMS loudness over a
+// specified window, and reports it at specified intervals.
+//
+// Do not modify an Analyzer's fields after calling Write.
 type Analyzer struct {
 	SampleRate   int64
 	WordSize     uint
 	Channels     int
 	LittleEndian bool
 	Signed       bool
-	Window       time.Duration
+
+	// Duration of loudness computation window. Typical values are
+	// 400*time.Millisecond (momentary loudness) and 3*time.Second
+	// (short term loudness).
+	Window time.Duration
+
+	// Time interval (relative to the audio data, not wall clock
+	// time) between calls to ObserveRMS.
 	ObserveEvery time.Duration
-	ObserveRMS   func(float64)
+
+	// Func to call with current window loudness.
+	ObserveRMS func(rms float64)
 
 	pending   []byte  // bytes written but not yet decoded
 	squares   []int64 // values added to rolling sum
@@ -27,13 +41,18 @@ type Analyzer struct {
 	countdown int64 // samples until next observe
 }
 
-var (
-	ErrBadParameters = errors.New("bad Analyzer parameters")
-)
+var ErrBadParameters = errors.New("bad Analyzer parameters")
 
-func (a *Analyzer) MIMEParams(hdr string) error {
+// UseMIMEType sets the Analyzer's SampleRate, WordSize, Channels,
+// LittleEndian, and Signed fields to match the given MIME type (e.g.,
+// a Content-Type header value).  It returns an error if the MIME type
+// is unsupported or not understood.
+//
+// Currently, little-endian signed 16-bit streams are supported, as in
+// "audio/L16; rate=44100; channels=2".
+func (a *Analyzer) UseMIMEType(mt string) error {
 	var rate, channels int64
-	for i, s := range strings.Split(hdr, ";") {
+	for i, s := range strings.Split(mt, ";") {
 		s = strings.TrimSpace(s)
 		if i == 0 {
 			if !strings.HasPrefix(s, "audio/L16") {
@@ -60,7 +79,7 @@ func (a *Analyzer) MIMEParams(hdr string) error {
 		}
 	}
 	if rate == 0 || channels == 0 {
-		return fmt.Errorf("incomplete header (need rate and channels): %q", hdr)
+		return fmt.Errorf("incomplete header (need rate and channels): %q", mt)
 	}
 	a.SampleRate = rate
 	a.Channels = int(channels)
@@ -70,6 +89,8 @@ func (a *Analyzer) MIMEParams(hdr string) error {
 	return nil
 }
 
+// Write decodes and analyzes the supplied PCM audio data, calling
+// ObserveRMS as needed.
 func (a *Analyzer) Write(p []byte) (int, error) {
 	if a.squares == nil {
 		if a.Channels < 1 || a.WordSize == 0 || a.WordSize&7 != 0 || a.WordSize >= 64 || a.SampleRate < 1 || a.SampleRate*int64(a.ObserveEvery)/int64(time.Second) < 1 {

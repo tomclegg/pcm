@@ -19,7 +19,7 @@ func main() {
 			fmt.Printf("%*s%f\n", int(rms*40), "|", rms)
 		},
 	}
-	a.MIMEParams("audio/L16; rate=44100; channels=2")
+	a.UseMIMEType("audio/L16; rate=44100; channels=2")
 	_, err := io.Copy(a, os.Stdin)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
