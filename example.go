@@ -13,7 +13,8 @@ import (
 
 func main() {
 	a := &pcm.Analyzer{
-		Interval: 400 * time.Millisecond,
+		Window:       400 * time.Millisecond,
+		ObserveEvery: 400 * time.Millisecond,
 		ObserveRMS: func(rms float64) {
 			fmt.Printf("%*s%f\n", int(rms*40), "|", rms)
 		},
