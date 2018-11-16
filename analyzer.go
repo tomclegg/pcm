@@ -88,7 +88,11 @@ func (a *Analyzer) Write(p []byte) (int, error) {
 				s = (s << (bigshift * 8)) | (int64(p[0]) << (littleshift * b))
 				p = p[1:]
 			}
-			if !a.Signed {
+			if a.Signed {
+				if s&(1<<(a.WordSize-1)) != 0 {
+					s -= 1 << a.WordSize
+				}
+			} else {
 				s -= 1 << (a.WordSize - 1)
 			}
 			a.ss += s * s
