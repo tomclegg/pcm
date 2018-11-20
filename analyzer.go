@@ -35,10 +35,10 @@ type Analyzer struct {
 
 	pending   []byte  // bytes written but not yet decoded
 	squares   []int64 // values added to rolling sum
-	len       int
-	sum       int64 // rolling sum
-	next      int   // index (in squares) of next sample
-	countdown int64 // samples until next observe
+	nwindow   int64   // window size in #samples
+	sum       int64   // rolling sum
+	next      int     // index (in squares) of next sample
+	countdown int64   // samples until next observe
 }
 
 var ErrBadParameters = errors.New("bad Analyzer parameters")
@@ -92,12 +92,15 @@ func (a *Analyzer) UseMIMEType(mt string) error {
 // Write decodes and analyzes the supplied PCM audio data, calling
 // ObserveRMS as needed.
 func (a *Analyzer) Write(p []byte) (int, error) {
-	if a.squares == nil {
+	if a.nwindow == 0 {
 		if a.Channels < 1 || a.WordSize == 0 || a.WordSize&7 != 0 || a.WordSize >= 64 || a.SampleRate < 1 || a.SampleRate*int64(a.ObserveEvery)/int64(time.Second) < 1 {
 			return 0, ErrBadParameters
 		}
+		a.nwindow = int64(a.Channels) * a.SampleRate * int64(a.Window) / int64(time.Second)
+		if a.Window != a.ObserveEvery {
+			a.squares = make([]int64, 0, int(a.nwindow))
+		}
 		a.next = -1
-		a.squares = make([]int64, 0, int(int64(a.Channels)*a.SampleRate*int64(a.Window)/int64(time.Second)))
 	}
 
 	var bigshift, littleshift uint
@@ -126,17 +129,27 @@ func (a *Analyzer) Write(p []byte) (int, error) {
 			}
 			square := s * s
 
-			if a.next++; a.next == cap(a.squares) {
-				a.next = 0
-			} else if a.next == len(a.squares) {
-				a.squares = append(a.squares, 0)
+			a.sum += square
+			if a.squares != nil {
+				if a.next++; a.next == cap(a.squares) {
+					a.next = 0
+				} else if a.next == len(a.squares) {
+					a.squares = append(a.squares, 0)
+				}
+				a.sum -= a.squares[a.next]
+				a.squares[a.next] = square
 			}
-			a.sum += square - a.squares[a.next]
-			a.squares[a.next] = square
 		}
 		if a.countdown--; a.countdown <= 0 {
 			if a.countdown == 0 {
-				a.ObserveRMS(math.Sqrt(float64(a.sum/int64(len(a.squares)))) / float64(uint64(1)<<(a.WordSize-1)))
+				n := a.nwindow
+				if a.squares != nil {
+					n = int64(len(a.squares))
+				}
+				a.ObserveRMS(math.Sqrt(float64(a.sum/n)) / float64(uint64(1)<<(a.WordSize-1)))
+				if a.squares == nil {
+					a.sum = 0
+				}
 			}
 			a.countdown = a.SampleRate * int64(a.ObserveEvery) / int64(time.Second)
 		}
