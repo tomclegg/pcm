@@ -119,7 +119,7 @@ func (a *Analyzer) Write(p []byte) (int, error) {
 			}
 			if a.Signed {
 				if s&(1<<(a.WordSize-1)) != 0 {
-					s -= 1 << a.WordSize
+					s = -(s & ^(1 << (a.WordSize - 1)))
 				}
 			} else {
 				s -= 1 << (a.WordSize - 1)
