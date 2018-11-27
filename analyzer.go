@@ -1,4 +1,9 @@
 // Package pcm decodes PCM audio data and reports loudness levels.
+//
+// The loudness calculation is somewhat arbitrary, and does not
+// account for factors like DC offset in the input signal. It might be
+// good enough to reveal loudness trends, detect when loudness departs
+// from an expected range, etc. YMMV.
 package pcm
 
 import (
@@ -30,7 +35,7 @@ type Analyzer struct {
 	// time) between calls to ObserveRMS.
 	ObserveEvery time.Duration
 
-	// Func to call with current window loudness.
+	// Func to call with current window loudness in dB.
 	ObserveRMS func(rms float64)
 
 	pending   []byte  // bytes written but not yet decoded
@@ -146,7 +151,7 @@ func (a *Analyzer) Write(p []byte) (int, error) {
 				if a.squares != nil {
 					n = int64(len(a.squares))
 				}
-				a.ObserveRMS(math.Sqrt(float64(a.sum/n)) / float64(uint64(1)<<(a.WordSize-1)))
+				a.ObserveRMS(10 * math.Log10(math.Sqrt(float64(a.sum/n))/float64(uint64(1)<<(a.WordSize-1))))
 				if a.squares == nil {
 					a.sum = 0
 				}
