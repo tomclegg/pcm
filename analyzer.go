@@ -32,7 +32,7 @@ type Analyzer struct {
 	Window time.Duration
 
 	// Time interval (relative to the audio data, not wall clock
-	// time) between calls to ObserveRMS.
+	// time) between calls to ObserveRMS/ObservePeak.
 	ObserveEvery time.Duration
 
 	// Func to call with current window loudness in dB.
@@ -44,6 +44,13 @@ type Analyzer struct {
 	sum       int64   // rolling sum
 	next      int     // index (in squares) of next sample
 	countdown int64   // samples until next observe
+	nobserve  int64   // samples per ObserveEvery interval
+
+	// Func to call with peak sample from last interval in dB.
+	ObservePeak func(peak float64)
+	peak        int64 // max sample amplitude since last call to ObservePeak
+
+	wordMax float64 // max sample amplitude for this word size
 }
 
 var ErrBadParameters = errors.New("bad Analyzer parameters")
@@ -95,7 +102,7 @@ func (a *Analyzer) UseMIMEType(mt string) error {
 }
 
 // Write decodes and analyzes the supplied PCM audio data, calling
-// ObserveRMS as needed.
+// ObserveRMS and ObservePeak as needed.
 func (a *Analyzer) Write(p []byte) (int, error) {
 	if a.nwindow == 0 {
 		if a.Channels < 1 || a.WordSize == 0 || a.WordSize&7 != 0 || a.WordSize >= 64 || a.SampleRate < 1 || a.SampleRate*int64(a.ObserveEvery)/int64(time.Second) < 1 {
@@ -106,6 +113,9 @@ func (a *Analyzer) Write(p []byte) (int, error) {
 			a.squares = make([]int64, 0, int(a.nwindow))
 		}
 		a.next = -1
+		a.wordMax = float64(uint64(1) << (a.WordSize - 1))
+		a.nobserve = a.SampleRate*int64(a.ObserveEvery)/int64(time.Second) - 1
+		a.countdown = a.nobserve
 	}
 
 	var bigshift, littleshift uint
@@ -118,7 +128,7 @@ func (a *Analyzer) Write(p []byte) (int, error) {
 	if len(a.pending) > 0 {
 		p = append(a.pending, p...)
 	}
-	for len(p) > a.Channels*int(a.WordSize)/8 {
+	for len(p) >= a.Channels*int(a.WordSize)/8 {
 		for c := 0; c < a.Channels; c++ {
 			var s int64
 			for b := uint(0); b < a.WordSize; b += 8 {
@@ -144,19 +154,29 @@ func (a *Analyzer) Write(p []byte) (int, error) {
 				a.sum -= a.squares[a.next]
 				a.squares[a.next] = square
 			}
-		}
-		if a.countdown--; a.countdown <= 0 {
-			if a.countdown == 0 {
-				n := a.nwindow
-				if a.squares != nil {
-					n = int64(len(a.squares))
-				}
-				a.ObserveRMS(10 * math.Log10(math.Sqrt(float64(a.sum/n))/float64(uint64(1)<<(a.WordSize-1))))
-				if a.squares == nil {
-					a.sum = 0
-				}
+
+			if a.peak < s {
+				a.peak = s
+			} else if a.peak < -s {
+				a.peak = -s
 			}
-			a.countdown = a.SampleRate * int64(a.ObserveEvery) / int64(time.Second)
+		}
+		if a.countdown--; a.countdown == 0 {
+			n := a.nwindow
+			if a.squares != nil {
+				n = int64(len(a.squares))
+			}
+			if a.ObserveRMS != nil {
+				a.ObserveRMS(10 * math.Log10(math.Sqrt(float64(a.sum/n))/a.wordMax))
+			}
+			if a.ObservePeak != nil {
+				a.ObservePeak(10 * math.Log10(float64(a.peak)/a.wordMax))
+				a.peak = 0
+			}
+			if a.squares == nil {
+				a.sum = 0
+			}
+			a.countdown = a.nobserve
 		}
 	}
 	a.pending = append([]byte(nil), p...)
